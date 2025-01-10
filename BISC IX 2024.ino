@@ -1,18 +1,23 @@
 #include <Arduino.h>
-
+#include <stack>
 // Motor control pins
-const int IN1 = 10;
-const int IN2 = 11;
-const int IN3 = 12;
-const int IN4 = 13;
+const int IN1 = 18;
+const int IN2 = 19;
+const int IN3 = 21;
+const int IN4 = 20;
 
 // Ultrasonic sensor pins
-const int trigLeft = 16;
-const int echoLeft = 15;
-const int trigCenter = 9;
-const int echoCenter = 48;
-const int trigRight = 8;
-const int echoRight = 3;
+const int trigLeft = 6;
+const int echoLeft = 7;
+const int trigCenter = 5;
+const int echoCenter = 8;
+const int trigRight = 3;
+const int echoRight = 4;
+const int TRIG_ForwardLeft = 9;
+const int ECHO_ForwardLeft = 10;
+const int TRIG_ForwardRight = 11;
+const int ECHO_ForwardRight = 12;
+
 // PWM configurations
 const int pwmChannel1 = 0;   // PWM channel for IN1
 const int pwmChannel2 = 1;   // PWM channel for IN2
@@ -25,6 +30,7 @@ const int pwmResolution = 8; // PWM resolution (8-bit: 0-255)
 volatile int directionCommand = 0; // Command to control direction
 SemaphoreHandle_t xSemaphore;      // Semaphore for thread safety
 int lastCommand = -99;             // Tracks the last executed command
+std::stack<int> pathHistory;       // Stack to remember the path taken
 
 // Function to set motor speed
 void setMotorSpeed(int channel, int dutyCycle)
@@ -52,33 +58,33 @@ long readUltrasonicDistance(int trigPin, int echoPin)
 void forward()
 {
   setMotorSpeed(pwmChannel1, 0);   // IN1 OFF
-  setMotorSpeed(pwmChannel2, 128); // IN2 Half speed
-  setMotorSpeed(pwmChannel3, 128); // IN3 Half speed
-  setMotorSpeed(pwmChannel4, 0);   // IN4 OFF
+  setMotorSpeed(pwmChannel2, 255); // IN2 Half speed
+  setMotorSpeed(pwmChannel3, 0);   // IN3 OFF
+  setMotorSpeed(pwmChannel4, 255); // IN4 Half speed
 }
 
 void reverse()
 {
-  setMotorSpeed(pwmChannel1, 128); // IN1 Half speed
+  setMotorSpeed(pwmChannel1, 255); // IN1 Half speed
   setMotorSpeed(pwmChannel2, 0);   // IN2 OFF
-  setMotorSpeed(pwmChannel3, 0);   // IN3 OFF
-  setMotorSpeed(pwmChannel4, 128); // IN4 Half speed
-}
-
-void left()
-{
-  setMotorSpeed(pwmChannel1, 0);   // IN1 OFF
-  setMotorSpeed(pwmChannel2, 128); // IN2 Half speed
-  setMotorSpeed(pwmChannel3, 0);   // IN3 OFF
-  setMotorSpeed(pwmChannel4, 128); // IN4 Half speed
+  setMotorSpeed(pwmChannel3, 255); // IN3 Half speed
+  setMotorSpeed(pwmChannel4, 0);   // IN4 OFF
 }
 
 void right()
 {
-  setMotorSpeed(pwmChannel1, 128); // IN1 Half speed
-  setMotorSpeed(pwmChannel2, 0);   // IN2 OFF
-  setMotorSpeed(pwmChannel3, 128); // IN3 Half speed
+  setMotorSpeed(pwmChannel1, 0);   // IN1 OFF
+  setMotorSpeed(pwmChannel2, 255); // IN2 Half speed
+  setMotorSpeed(pwmChannel3, 255); // IN3 Half speed
   setMotorSpeed(pwmChannel4, 0);   // IN4 OFF
+}
+
+void left()
+{
+  setMotorSpeed(pwmChannel1, 255); // IN1 Half speed
+  setMotorSpeed(pwmChannel2, 0);   // IN2 OFF
+  setMotorSpeed(pwmChannel3, 0);   // IN3 OFF
+  setMotorSpeed(pwmChannel4, 255); // IN4 Half speed
 }
 
 void stopMotors()
@@ -97,6 +103,8 @@ void sensorTask(void *parameter)
     long distanceLeft = readUltrasonicDistance(trigLeft, echoLeft);
     long distanceCenter = readUltrasonicDistance(trigCenter, echoCenter);
     long distanceRight = readUltrasonicDistance(trigRight, echoRight);
+    long distanceForwardLeft = readUltrasonicDistance(TRIG_ForwardLeft, ECHO_ForwardLeft);
+    long distanceForwardRight = readUltrasonicDistance(TRIG_ForwardRight, ECHO_ForwardRight);
 
     Serial.print("Left: ");
     Serial.print(distanceLeft);
@@ -104,10 +112,29 @@ void sensorTask(void *parameter)
     Serial.print(distanceCenter);
     Serial.print(" cm | Right: ");
     Serial.println(distanceRight);
+    Serial.print("Forward_Left: ");
+    Serial.print(distanceForwardLeft);
+    Serial.print(" cm | Forward_Right: ");
+    Serial.println(distanceForwardRight);
 
-    int command = 4; // Default to forward
+    int command = 3; // Default to forward
 
-    // Determine direction based on distances
+    // Ultrasonic sensors data to avoid obstacles
+    if (distanceForwardLeft < 20 && distanceForwardRight < 20)
+    {
+      command = -1; // Reverse
+    }
+    else if (distanceForwardLeft < 20)
+    {
+      command = 5; // Go right
+    }
+    else if (distanceForwardRight < 20)
+    {
+      command = 6; // Go left
+    }
+
+    // Ultrasonic sensors data to determine node in the maze
+
     if (distanceCenter < 20 && distanceRight < 20 && distanceLeft < 20)
     {
       command = -1; // Reverse
@@ -143,7 +170,7 @@ void sensorTask(void *parameter)
     { // Only left obstacle
       if (distanceCenter >= 1000)
       {
-        command = 4; // Go forward
+        command = 3; // Go forward
       }
       else if (distanceRight >= 1000)
       {
@@ -158,7 +185,7 @@ void sensorTask(void *parameter)
     { // Only right obstacle
       if (distanceCenter >= 1000)
       {
-        command = 4; // Go forward
+        command = 3; // Go forward
       }
       else if (distanceLeft >= 1000)
       {
@@ -171,7 +198,7 @@ void sensorTask(void *parameter)
     }
     else
     {
-      command = 4; // Move forward (default)
+      command = 3; // Move forward (default)
     }
 
     if (xSemaphoreTake(xSemaphore, portMAX_DELAY) == pdTRUE)
@@ -206,18 +233,32 @@ void movementTask(void *parameter)
       {
       case -1:
         reverse();
+        pathHistory.push(-1);
         break;
       case 1:
         left();
+        pathHistory.push(1);
         break;
       case 2:
         right();
+        pathHistory.push(2);
         break;
-      case 4:
+      case 3:
         forward();
+        pathHistory.push(3);
+        break;
+      case 5:
+        right();
+        // not pushing to stack as it is just to avoid collision with wall or any obstacle
+        break;
+      case 6:
+        left();
+        // not pushing to stack as it is just to avoid collision with wall or any obstacle
         break;
       default:
         forward();
+        pathHistory.push(3);
+
         break;
       }
     }
@@ -247,6 +288,10 @@ void setup()
   pinMode(echoCenter, INPUT);
   pinMode(trigRight, OUTPUT);
   pinMode(echoRight, INPUT);
+  pinMode(TRIG_ForwardLeft, OUTPUT);
+  pinMode(ECHO_ForwardLeft, INPUT);
+  pinMode(TRIG_ForwardRight, OUTPUT);
+  pinMode(ECHO_ForwardRight, INPUT);
 
   // Create semaphore
   xSemaphore = xSemaphoreCreateMutex();
