@@ -1,0 +1,40 @@
+#include <SPI.h>
+#include <nRF24L01.h>
+#include <RF24.h>
+
+// Define the pipe (address) for communication
+const uint64_t my_radio_pipe = 0xE8E8F0F0E1LL; 
+
+// Create RF24 radio object with CNS and CE pins
+RF24 radio(9, 10);
+
+void setup() {
+  Serial.begin(9600);
+
+  // Initialize the radio
+  radio.begin();
+
+  // Set receiving configurations
+  radio.setAutoAck(false);               // Disable Auto-Acknowledgment
+  radio.setDataRate(RF24_250KBPS);       // Match the transmitter's data rate
+  radio.openReadingPipe(1, my_radio_pipe); // Open the reading pipe with the same address
+  radio.startListening();                // Set radio to listening mode
+
+  Serial.println("Receiver ready.");
+}
+
+void loop() {
+  // Check if there is incoming data
+    int receivedData = 0;
+
+    if (radio.available()) {
+    int receivedData = 0;
+
+    // Read the data
+    radio.read(&receivedData, sizeof(receivedData));
+
+    // Print the received data
+    Serial.print("Received: ");
+    Serial.println(receivedData);
+  }
+}
