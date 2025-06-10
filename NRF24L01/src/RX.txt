@@ -38,3 +38,63 @@ void loop() {
     Serial.println(receivedData);
   }
 }
+
+
+
+
+
+
+/////////////////////////////////////////////////////////////
+
+
+
+#include <SPI.h>
+#include <nRF24L01.h>
+#include <RF24.h>
+
+// Define the pipe (address) for communication
+const uint64_t my_radio_pipe = 0xE8E8F0F0E1LL; 
+
+// Create RF24 radio object with CE and CSN pins
+RF24 radio(9, 10);
+
+// Structure to hold joystick data
+struct JoystickData {
+  int xValue;
+  int yValue;
+  bool button;
+};
+
+void setup() {
+  Serial.begin(9600);
+
+  // Initialize the radio
+  radio.begin();
+  radio.setAutoAck(false);
+  radio.setDataRate(RF24_250KBPS);
+  radio.openReadingPipe(1, my_radio_pipe); // Open desired pipe
+  radio.startListening(); // Start listening mode
+
+  Serial.println("Receiver ready. Listening on pipe 1...");
+}
+
+void loop() {
+  uint8_t pipeNum;
+
+  if (radio.available(&pipeNum)) {
+    if (pipeNum == 1) {
+      JoystickData receivedData;
+      radio.read(&receivedData, sizeof(receivedData));
+
+      Serial.print("Received -> X: ");
+      Serial.print(receivedData.xValue);
+      Serial.print(" | Y: ");
+      Serial.print(receivedData.yValue);
+      Serial.print(" | Button: ");
+      Serial.println(receivedData.button ? "Pressed" : "Released");
+    } else {
+      // Optional: clear data from undesired pipe
+      radio.flush_rx();
+    }
+  }
+}

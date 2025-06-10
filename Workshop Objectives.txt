@@ -1,0 +1,57 @@
+Workshop Objectives:
+2-3 workshops:
+--Remotely operated bot over BLE/Wi-Fi Radio
+--Cost effective and cheap production
+--Bring To self learning Level
+
+
+Purpose:
+All interested people of this domain, to bring closer to robotics, encourage and give guidance so that they are self-sufficient.
+--So that this will Be a genesis to a working body (community)
+--Pooling of ideas & innovations
+--And bring raising the bar of robotics automation to whole new level.
+
+
+--Kaise karna hai:
+
+
+
+--What is needed to build an Autonomous bot
+--What sort of components are needed and to Give basic intro of their purpose & functionality.
+
+
+--Introduction To Microcontrollers
+Give a brief & a shallow Understanding
+
+--Brief intro to motor drivers
+--Thorough Details of power distribution
+
+--END: Do's & Don'ts of every component
+
+
+--Over the period of the workshops, Gradually Explain the depth of microcontrollers:
+--OS
+--architecture
+--limitations, pros/cons
+--comparison with industrial grade controllers
+--Give Motor driver theory explanation, in 
+
+
+
+Kyun KArna hai:
+--Existing societies are non-hobbyists, Uninformed , Less knowlegdable & illiterate people.
+--Working with them is futile.
+--Their Interrupts waste all efforts made for the cause.
+--Their competitions are quite costly, and their dimensions and weight categories(rules & regulations) are quite Insane and unreal. Especially considering the components and motors available in the local market
+
+
+#For PPT
+--Mention Necessity
+
+To Build Mutable and Immutable systems that are self reliant for automation.
+An example of a car:
+--We need 
+4 wheels
+-4 motors
+Batteries to power motor
+--Motor driver for 
