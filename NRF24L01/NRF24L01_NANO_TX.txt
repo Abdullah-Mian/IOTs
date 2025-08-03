@@ -1,10 +1,20 @@
 #include <SPI.h>
 #include <RF24.h>
 
+// Joystick pins
+#define X_AXIS A7
+#define Y_AXIS A6
+#define BUTTON_PIN 2
+
 RF24 radio(9, 10); // CE = D9, CSN = D10
 const byte address[6] = "00001"; // Address for communication
 
+char lastSent = '\0'; // To keep track of last sent character
+
 void setup() {
+  pinMode(X_AXIS, INPUT);
+  pinMode(Y_AXIS, INPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   Serial.begin(9600);
   radio.begin();
   if (radio.isChipConnected()) {
@@ -18,9 +28,31 @@ void setup() {
 }
 
 void loop() {
-  const char text[] = "Assalamualikum";
-  Serial.print("Sending: ");
-  Serial.println(text);
-  radio.write(&text, sizeof(text));
-  delay(1000); // Send every second
+  int xValue = analogRead(X_AXIS);
+  int yValue = analogRead(Y_AXIS);
+  bool buttonPressed = digitalRead(BUTTON_PIN) == LOW;
+
+  char direction = '\0';
+
+  if (yValue < 400) {
+    direction = 'W'; // Forward
+  } else if (yValue > 600) {
+    direction = 'B'; // Backward
+  } else if (xValue < 400) {
+    direction = 'L'; // Left
+  } else if (xValue > 600) {
+    direction = 'R'; // Right
+  } else {
+    direction = 'S';
+  }
+
+  // Only send if direction changed and it's valid
+  if (direction != lastSent) {
+    radio.write(&direction, 1);
+    Serial.print("Sent: ");
+    Serial.println(direction);
+    lastSent = direction;
+  }
+
+  delay(100); // Delay for readability
 }
