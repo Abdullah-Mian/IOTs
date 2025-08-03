@@ -1,0 +1,26 @@
+#include <SPI.h>
+#include <RF24.h>
+
+RF24 radio(9, 10); // CE = D9, CSN = D10
+const byte address[6] = "00001"; // Address for communication
+
+void setup() {
+  Serial.begin(9600);
+  radio.begin();
+  if (radio.isChipConnected()) {
+    Serial.println("NRF24L01 connected");
+  } else {
+    Serial.println("NRF24L01 not connected");
+  }
+  radio.openWritingPipe(address);
+  radio.setPALevel(RF24_PA_LOW);
+  radio.stopListening(); // Set to transmitter mode
+}
+
+void loop() {
+  const char text[] = "Assalamualikum";
+  Serial.print("Sending: ");
+  Serial.println(text);
+  radio.write(&text, sizeof(text));
+  delay(1000); // Send every second
+}
