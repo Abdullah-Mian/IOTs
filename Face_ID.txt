@@ -1,0 +1,80 @@
+EdgeFace
+
+Description: A hybrid CNN-Transformer architecture (inspired by EdgeNeXt) optimized for edge devices. It's extremely lightweight with low computational cost and compact storage, achieving high accuracy without needing large VRAM. Suitable for always-on edge computing; can be quantized further (e.g., to 8-bit or lower via standard tools). Model size: ~1.77M parameters. Performance: 99.73% on LFW, 94.85% on IJB-C. Ideal for single-product integration with onboard DB.
+Quantization: Not natively quantized but easily quantizable to 4-bit using PyTorch or ONNX tools for even lower VRAM (~100-200 MB inference).
+Edge Suitability: Explicitly for edge; runs on mobile/embedded hardware.
+Availability: Open-source code available (replication experiments). Link: https://arxiv.org/abs/2307.01838 (paper and code details).
+Why Fits: State-of-the-art for edge face rec; lightest in class without sacrificing reliability.
+
+
+MobileFaceNet (Quantized Variants)
+
+Description: A highly efficient CNN-based model for face recognition, under 1M parameters originally. Sub-byte quantized versions (e.g., 4-bit or lower) reduce size further for edge. Used in mobile apps; supports embedding-based authentication with onboard storage. Performance: ~99.15% on LFW in quantized forms.
+Quantization: Sub-byte (e.g., 4-bit or mixed) quantization available, reducing model to <1 MB. Native support via TensorFlow Lite or QKeras for 4-bit weights/activations, enabling low VRAM (~50-100 MB). Papers show lossless accuracy post-quantization.
+Edge Suitability: Designed for mobiles/edge; quantized versions run on devices without GPUs.
+Availability: Open-source. Original: https://arxiv.org/abs/1804.07573. Quantized: https://research.utwente.nl/files/296240725/Sub_byte_quantization.pdf (sub-byte details); GitHub implementations like https://github.com/sirius-ai/MobileFaceNet_TF for base model.
+
+
+
+GhostFaceNets
+
+Description: Lightweight face recognition with quantization support (e.g., on MobileFaceNet base). Under 1M params in quantized forms; high accuracy on LFW (99.43%).
+Quantization: Supports 4-bit quantization; reduces to low VRAM.
+Edge Suitability: For cheap operations on edge hardware.
+Availability: Paper: https://ieeexplore.ieee.org/document/10098610 (mentions quantized MobileFaceNet).
+Why Fits: Even lighter without quantization; easily 4-bit.
+
+
+
+InsightFace / ArcFace (SOTA backbone + loss for face embeddings) — the canonical open library for high-quality FR (ResNet backbones, many pretrained models). Great reference for accuracy and production pipelines. 
+GitHub
+
+
+DGFaceNet / RobFaceNet / other lightweight designs — newer academic proposals that explicitly trade a little accuracy for much lower compute. Examples/papers collected below. 
+ScienceDirect
+
+
+CompreFace (open-source, server/edge capable) — open source face recognition API you can self-host; useful as an integration/rapid-prototype (can be packaged to run on small servers). 
+dhiwise.com
+
+Open-source face SDKs / Faceplugin / other SDKs — several open SDKs exist that run on premise and can be adapted to embedded Linux devices; check their repos and licenses before commercial use.
+
+
+===========================================================
+6) Practical recommendations & suggested stack for a ZKTeco-style product (edge + onboard DB)
+
+Minimum viable architecture (fast path):
+
+Face detector (fast, tiny): BlazeFace / MediaPipe — detects faces + landmarks on CPU/GPU. 
+mediapipe.readthedocs.io
++1
+
+Alignment + embedding: MobileFaceNet (tiny) or a quantized ArcFace/ResNet18 variant exported from InsightFace. Start with MobileFaceNet for smallest footprint. 
+GitHub
++1
+
+Quantize to 4-bit: try PTQ first (ONNX Runtime or TensorRT workflows) and then apply QAT if performance drops — follow QuantFace/Ef-QuantFace methodology. Use synthetic data if privacy is a concern (QuantFace shows this approach). 
+arXiv
++1
+
+Embedding DB: lightweight onboard DB (SQLite for small installations, or a small key-value store). Store 512/256/128-d float embeddings — for 4-bit you will store quantized weights locally but embeddings can remain FP16/FP32 or even PQ compressed for space.
+
+Runtime: export model to ONNX then use ONNX-Runtime (with quantization) or use TensorRT/Edge-TPU delegates depending on hardware. InsightFace + ONNX pattern is common. 
+GitHub
+
+Notes:
+
+4-bit is possible but harder than 8-bit: you’ll likely need Quantization-Aware Training (QAT) or specialized PTQ techniques shown in QuantFace/Ef-QuantFace to avoid significant accuracy loss. 
+arXiv
++1
+
+Detector + embedder combo: Keep detector FP16/FP32 (it’s cheap) and quantize the embedding backbone first — embeddings must remain discriminative. The QuantFace approach quantizes the backbone successfully. 
+arXiv
+===============================================================
+
+Frameworks for Integration
+
+DeepFace: Python library wrapping lightweight models (e.g., MobileFaceNet, ArcFace variants). Supports quantization and edge deployment. GitHub: https://github.com/serengil/deepface. Low VRAM; add onboard DB via embeddings.
+CompreFace: Open-source service for face recognition; integrates lightweight models, easy for single-product setup. GitHub: https://github.com/exadel-inc/CompreFace.
+
+For even lighter without quantization: Use base models like Ultra-Light-Fast-Generic-Face-Detector (detection prelude) + recognition, but pair with above.
