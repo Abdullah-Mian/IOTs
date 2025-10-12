@@ -1,0 +1,60 @@
+#include <SPI.h>
+#include <RF24.h>
+
+RF24 radio(9, 10); // CE = D9, CSN = D10
+const byte address[6] = "00001"; // Same address
+
+#define PIN_D8 8
+#define PIN_D3 3
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(PIN_D8, OUTPUT);
+  pinMode(PIN_D3, OUTPUT);
+
+  digitalWrite(PIN_D8, LOW);
+  digitalWrite(PIN_D3, LOW);
+
+  radio.begin();
+  if (radio.isChipConnected()) {
+    Serial.println("NRF24L01 connected");
+  } else {
+    Serial.println("NRF24L01 not connected");
+  }
+  radio.openReadingPipe(0, address);
+  radio.setPALevel(RF24_PA_LOW);
+  radio.startListening(); // Set to receiver mode
+}
+
+void loop() {
+  if (radio.available()) {
+    char text[32] = "";
+    radio.read(&text, sizeof(text));
+    Serial.print("Received: ");
+    Serial.println(text);
+
+    // Check first character
+    char cmd = text[0];
+
+    if (cmd == 'S') {
+      digitalWrite(PIN_D8, LOW);
+      digitalWrite(PIN_D3, LOW);
+    } 
+    else if (cmd == 'W') {
+      digitalWrite(PIN_D8, HIGH);
+      digitalWrite(PIN_D3, HIGH);
+    } 
+    else if (cmd == 'L') {
+      digitalWrite(PIN_D8, LOW);
+      digitalWrite(PIN_D3, HIGH);
+    } 
+    else if (cmd == 'R') {
+      digitalWrite(PIN_D8, HIGH);
+      digitalWrite(PIN_D3, LOW);
+    } 
+    else {
+      digitalWrite(PIN_D8, LOW);
+      digitalWrite(PIN_D3, LOW);
+    }
+  }
+}
