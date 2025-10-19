@@ -1,0 +1,97 @@
+#include <SPI.h>
+#include <RF24.h>
+
+RF24 radio(9, 10);  // CE = D9, CSN = D10
+const byte address[6] = "00001";
+
+#define PIN_D8 8
+#define PIN_D3 3
+
+bool nrfConnected = false;
+unsigned long lastNRFCheck = 0;
+const unsigned long NRF_RECHECK_INTERVAL = 3000; // 3 seconds
+
+char lastCommand = 'S'; // Keep last valid command
+
+void stopMotors() {
+  digitalWrite(PIN_D8, LOW);
+  digitalWrite(PIN_D3, LOW);
+}
+
+void applyCommand(char cmd) {
+  switch (cmd) {
+    case 'S': digitalWrite(PIN_D8, LOW); digitalWrite(PIN_D3, LOW); break;
+    case 'W': digitalWrite(PIN_D8, HIGH); digitalWrite(PIN_D3, HIGH); break;
+    case 'L': digitalWrite(PIN_D8, LOW); digitalWrite(PIN_D3, HIGH); break;
+    case 'R': digitalWrite(PIN_D8, HIGH); digitalWrite(PIN_D3, LOW); break;
+  }
+}
+
+bool isValidCmd(char c) {
+  return (c == 'S' || c == 'W' || c == 'L' || c == 'R');
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(PIN_D8, OUTPUT);
+  pinMode(PIN_D3, OUTPUT);
+  stopMotors();
+
+  if (radio.begin()) {
+    if (radio.isChipConnected()) {
+      Serial.println("✅ NRF24L01 connected");
+      nrfConnected = true;
+      radio.openReadingPipe(0, address);
+      radio.setPALevel(RF24_PA_LOW);
+      radio.startListening();
+    } else {
+      Serial.println("⚠️ NRF24L01 not connected at startup");
+    }
+  } else {
+    Serial.println("⚠️ NRF24L01 initialization failed");
+  }
+
+  Serial.println("Receiver ready.");
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  // Periodically recheck NRF
+  if (now - lastNRFCheck >= NRF_RECHECK_INTERVAL) {
+    lastNRFCheck = now;
+    bool nowConnected = radio.isChipConnected();
+    if (nowConnected && !nrfConnected) {
+      Serial.println("✅ NRF reconnected!");
+      radio.openReadingPipe(0, address);
+      radio.setPALevel(RF24_PA_LOW);
+      radio.startListening();
+      nrfConnected = true;
+    } else if (!nowConnected && nrfConnected) {
+      Serial.println("❌ NRF disconnected!");
+      nrfConnected = false;
+      stopMotors();
+    }
+  }
+
+  // --- MAIN RECEIVING LOOP ---
+  if (nrfConnected && radio.available()) {
+    char text[32] = "";
+    radio.read(&text, sizeof(text));
+
+    char cmd = text[0];
+    if (isValidCmd(cmd)) {
+      Serial.print("Received valid cmd: ");
+      Serial.println(cmd);
+      lastCommand = cmd;
+      applyCommand(cmd);
+    } else {
+      // Ignore garbage, do not change motor state
+      Serial.println("Ignored garbage data");
+    }
+  }
+
+  // Maintain last valid command until a new valid one arrives
+  applyCommand(lastCommand);
+}
