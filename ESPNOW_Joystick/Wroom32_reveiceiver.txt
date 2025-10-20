@@ -15,28 +15,21 @@
 #define IN3_PIN  25   // Motor B direction 1
 #define IN4_PIN  33   // Motor B direction 2
 
-#define LED_PIN  2
 
-const int stopDelay = 100;     // Safety delay in loop
 int speed = 200;
 
 // Structure to receive data
 typedef struct struct_message {
   char command;
-  int speed;
-  unsigned long timestamp;
 } struct_message;
 
 struct_message incomingData;
 
-// Statistics
-unsigned long packetsReceived = 0;
-unsigned long lastPacketTime = 0;
 
 // ─────────────────────────────
 // Motor control functions
 // ─────────────────────────────
-void moveForward(int speed) {
+void moveForward() {
   Serial.println("⬆️  FORWARD");
   analogWrite(IN1_PIN, speed);
   analogWrite(IN2_PIN, 0);
@@ -44,7 +37,7 @@ void moveForward(int speed) {
   analogWrite(IN4_PIN, 0);
 }
 
-void moveBackward(int speed) {
+void moveBackward() {
   Serial.println("⬇️  BACKWARD");
   analogWrite(IN1_PIN, 0);
   analogWrite(IN2_PIN, speed);
@@ -52,7 +45,7 @@ void moveBackward(int speed) {
   analogWrite(IN4_PIN, speed);
 }
 
-void turnLeft(int speed) {
+void turnLeft() {
   Serial.println("⬅️  LEFT");
   analogWrite(IN1_PIN, speed);
   analogWrite(IN2_PIN, 0);
@@ -60,7 +53,7 @@ void turnLeft(int speed) {
   analogWrite(IN4_PIN, speed);
 }
 
-void turnRight(int speed) {
+void turnRight() {
   Serial.println("➡️  RIGHT");
   analogWrite(IN1_PIN, 0);
   analogWrite(IN2_PIN, speed);
@@ -82,40 +75,21 @@ void stopMotors() {
 void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len) {
   memcpy(&incomingData, data, sizeof(incomingData));
   
-  packetsReceived++;
-  unsigned long currentTime = millis();
-  unsigned long latency = currentTime - incomingData.timestamp;
-  
-  digitalWrite(LED_PIN, HIGH);
-  
   Serial.println("╔════════════════════════════════╗");
   Serial.print("║ 📥 Command: ");
   Serial.print(incomingData.command);
-  Serial.print(" | Speed: ");
-  Serial.print(incomingData.speed);
-  Serial.println("      ║");
-  Serial.print("║ ⏱️  Latency: ");
-  Serial.print(latency);
-  Serial.println(" ms                 ║");
-  Serial.print("║ 📊 Packets: ");
-  Serial.print(packetsReceived);
-  Serial.println("                    ║");
-  Serial.println("╚════════════════════════════════╝");
   
   // Execute motor command
   switch (incomingData.command) {
-    case 'W': moveForward(incomingData.speed); break;
-    case 'S': moveBackward(incomingData.speed); break;
-    case 'A': turnLeft(incomingData.speed); break;
-    case 'D': turnRight(incomingData.speed); break;
+    case 'W': moveForward(); break;
+    case 'B': moveBackward(); break;
+    case 'A': turnLeft(); break;
+    case 'D': turnRight(); break;
+    case 'S': stopMotors(); break;
     case 'X':
     default:  stopMotors(); break;
   }
-
-  Serial.println();
   
-  lastPacketTime = currentTime;
-  digitalWrite(LED_PIN, LOW);
 }
 
 // ─────────────────────────────
@@ -129,10 +103,6 @@ void setup() {
   Serial.println("║      ESP32 WROOM32 ESP-NOW Receiver   ║");
   Serial.println("║         L298N (4-PIN PWM MODE)        ║");
   Serial.println("╚═══════════════════════════════════════╝\n");
-  
-  // Configure LED
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
   
   // Configure motor control pins
   pinMode(IN1_PIN, OUTPUT);
@@ -178,14 +148,5 @@ void setup() {
 // ─────────────────────────────
 void loop() {
   // Auto-stop if no packets received for 2 seconds
-  if (packetsReceived > 0 && (millis() - lastPacketTime > 2000)) {
-    static unsigned long lastWarning = 0;
-    if (millis() - lastWarning > 1000) {
-      stopMotors();
-      Serial.println("⚠️  Connection lost - Motors stopped!");
-      lastWarning = millis();
-    }
-  }
 
-  delay(stopDelay);
 }

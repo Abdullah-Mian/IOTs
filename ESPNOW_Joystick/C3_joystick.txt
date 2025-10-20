@@ -2,46 +2,33 @@
  * ESP32-C3 Super Mini - ESP-NOW Sender
  * Compatible with ESP-IDF 5.5 / Arduino Core 3.x
  */
-
 #include <esp_now.h>
 #include <WiFi.h>
-
 // IMPORTANT: Replace with your WROOM32's MAC Address
 uint8_t receiverMAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
 // Joystick pins
-#define JOY_X_PIN   0
-#define JOY_Y_PIN   1
+#define JOY_Y_PIN   0
+#define JOY_X_PIN   1
 #define JOY_BTN_PIN 2
-
 // Thresholds
-#define THRESHOLD_LOW  1000
-#define THRESHOLD_HIGH 3000
-
+#define THRESHOLD_LOW  10
+#define THRESHOLD_HIGH 4000
 // Variables
 int xValue = 0;
 int yValue = 0;
-char currentCommand = 'X';
-char lastCommand = 'X';
-unsigned long lastSendTime = 0;
-const unsigned long SEND_INTERVAL = 50;
-
+char currentCommand = 'B';
+char lastCommand = 'B';
 // Structure to send data
 typedef struct struct_message {
   char command;
-  int speed;
-  unsigned long timestamp;
 } struct_message;
-
 struct_message outgoingData;
-
 // Callback when data is sent - UPDATED for IDF 5.5
 void OnDataSent(const wifi_tx_info_t *tx_info, esp_now_send_status_t status) {
   if (status != ESP_NOW_SEND_SUCCESS) {
     Serial.println("❌ Delivery Failed!");
   }
 }
-
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -89,57 +76,37 @@ void setup() {
   Serial.println("\n🎮 Ready to send commands!\n");
   Serial.println("───────────────────────────────────────");
 }
-
 void loop() {
   xValue = analogRead(JOY_X_PIN);
   yValue = analogRead(JOY_Y_PIN);
   
-  currentCommand = 'X';
-  int speed = 200;
-  
-  if (yValue > THRESHOLD_HIGH) {
+  if (digitalRead(JOY_BTN_PIN) == LOW) {
+    currentCommand = 'X';
+  }
+  else if (yValue > THRESHOLD_HIGH) {
     currentCommand = 'W';
-    speed = map(yValue, THRESHOLD_HIGH, 4095, 150, 255);
   } 
   else if (yValue < THRESHOLD_LOW) {
-    currentCommand = 'S';
-    speed = map(yValue, THRESHOLD_LOW, 0, 150, 255);
+    currentCommand = 'B';
   }
   else if (xValue < THRESHOLD_LOW) {
     currentCommand = 'A';
-    speed = map(xValue, THRESHOLD_LOW, 0, 150, 255);
   }
   else if (xValue > THRESHOLD_HIGH) {
     currentCommand = 'D';
-    speed = map(xValue, THRESHOLD_HIGH, 4095, 150, 255);
   }
-  
-  if (digitalRead(JOY_BTN_PIN) == LOW) {
-    currentCommand = 'X';
-    speed = 0;
+  else {
+    currentCommand = 'S';
   }
-  
-  unsigned long currentTime = millis();
-  bool shouldSend = false;
   
   if (currentCommand != lastCommand) {
-    shouldSend = true;
-  } else if (currentTime - lastSendTime >= SEND_INTERVAL) {
-    shouldSend = true;
-  }
-  
-  if (shouldSend) {
     outgoingData.command = currentCommand;
-    outgoingData.speed = speed;
-    outgoingData.timestamp = currentTime;
     
     esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&outgoingData, sizeof(outgoingData));
     
     if (result == ESP_OK) {
       Serial.print("📤 Sent: ");
       Serial.print(currentCommand);
-      Serial.print(" | Speed: ");
-      Serial.print(speed);
       Serial.print(" | X:");
       Serial.print(xValue);
       Serial.print(" Y:");
@@ -147,7 +114,6 @@ void loop() {
     }
     
     lastCommand = currentCommand;
-    lastSendTime = currentTime;
   }
   
   delay(10);

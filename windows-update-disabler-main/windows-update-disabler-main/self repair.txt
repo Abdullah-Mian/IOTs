@@ -1,0 +1,33 @@
+Step 1: Run System File Checker
+Open Command Prompt as Administrator and run:
+
+sfc /scannow
+
+Step 2: Repair Windows Components
+After SFC completes, run:
+
+DISM /Online /Cleanup-Image /RestoreHealth
+
+Step 3: Reset Windows Update Components Properly
+Run these commands one by one in Admin Command Prompt:
+
+net stop wuauserv
+net stop cryptSvc
+net stop bits
+net stop msiserver
+
+ren C:\Windows\SoftwareDistribution SoftwareDistribution.old
+ren C:\Windows\System32\catroot2 catroot2.old
+
+net start wuauserv
+net start cryptSvc
+net start bits
+net start msiserver
+
+Step 4: Re-register Windows Services
+
+regsvr32 wuaueng.dll
+regsvr32 wuapi.dll
+regsvr32 wups.dll
+regsvr32 wups2.dll
+regsvr32 wucltux.dll
