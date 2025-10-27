@@ -1,0 +1,507 @@
+/*
+ * ========================================================
+ * ESP32 WROOM32 Robot Control with Auto-Discovery
+ * L298N Motor Driver Control via WebSocket
+ * ========================================================
+ * 
+ * HARDWARE CONNECTIONS:
+ * ====================
+ * L298N Motor Driver -> ESP32 WROOM32
+ * 
+ * Motor A (Left Motor):
+ *   IN1  -> GPIO 25  (Forward)
+ *   IN2  -> GPIO 26  (Backward)
+ *   ENA  -> GPIO 32  (Speed PWM)
+ * 
+ * Motor B (Right Motor):
+ *   IN3  -> GPIO 27  (Forward)
+ *   IN4  -> GPIO 14  (Backward)
+ *   ENB  -> GPIO 33  (Speed PWM)
+ * 
+ * Power Connections:
+ *   L298N 12V  -> Battery (+) 7-12V
+ *   L298N GND  -> Battery (-) + ESP32 GND
+ *   L298N 5V   -> ESP32 VIN (Optional, or use USB)
+ *   
+ * Motor Outputs:
+ *   OUT1 & OUT2 -> Left Motor
+ *   OUT3 & OUT4 -> Right Motor
+ * 
+ * REQUIRED LIBRARIES:
+ * ==================
+ * 1. WebSocketsClient by Markus Sattler
+ *    (Install via Arduino Library Manager)
+ * 2. ArduinoJson by Benoit Blanchon (v6.x)
+ *    (Install via Arduino Library Manager)
+ * 
+ * COMMANDS:
+ * =========
+ * W - Move Forward
+ * S - Stop Motors
+ * A - Turn Left
+ * D - Turn Right
+ * X - Move Backward
+ */
+
+#include <WiFi.h>
+#include <WebSocketsClient.h>
+#include <WiFiUdp.h>
+#include <ArduinoJson.h>
+
+// ============================================
+// CONFIGURATION - CHANGE THESE VALUES
+// ============================================
+
+// WiFi Credentials - CHANGE THESE!
+const char* WIFI_SSID = "Victus";        // Your WiFi name
+const char* WIFI_PASSWORD = "68986898"; // Your WiFi password
+
+// Motor Speed (0-255) - Adjust based on your motors
+#define MOTOR_SPEED_FORWARD  220   // Speed when moving forward
+#define MOTOR_SPEED_BACKWARD 200   // Speed when moving backward
+#define MOTOR_SPEED_TURN     180   // Speed when turning
+
+// ============================================
+// PIN DEFINITIONS - L298N Motor Driver
+// ============================================
+#define MOTOR_A_IN1  27    // Left Motor Forward
+#define MOTOR_A_IN2  26    // Left Motor Backward
+#define MOTOR_B_IN3  25    // Right Motor Forward
+#define MOTOR_B_IN4  33    // Right Motor Backward
+
+// ============================================
+// PWM CONFIGURATION
+// ============================================
+#define speed       100   // 
+// ============================================
+// NETWORK CONFIGURATION
+// ============================================
+#define UDP_DISCOVERY_PORT     8888
+#define DISCOVERY_TIMEOUT_MS   5000
+#define MAX_DISCOVERY_ATTEMPTS 10
+#define WEBSOCKET_RECONNECT_INTERVAL 5000
+
+// ============================================
+// GLOBAL OBJECTS
+// ============================================
+WiFiUDP udp;
+WebSocketsClient webSocket;
+
+// ============================================
+// STATE VARIABLES
+// ============================================
+String serverIP = "";
+int serverPort = 8765;
+bool serverDiscovered = false;
+bool wsConnected = false;
+String currentCommand = "S";
+
+// Heartbeat
+unsigned long lastHeartbeat = 0;
+const unsigned long HEARTBEAT_INTERVAL = 2000;
+
+// Connection monitoring
+unsigned long lastCommandTime = 0;
+const unsigned long COMMAND_TIMEOUT = 10000; // Stop if no command for 10s
+
+// ============================================
+// SETUP - RUNS ONCE
+// ============================================
+void setup() {
+  // Initialize Serial Monitor
+  Serial.begin(115200);
+  delay(100);
+  
+  // Print startup banner
+  printBanner();
+  
+  // Initialize motor control pins
+  setupMotorPins();
+  
+  // Ensure motors are stopped at startup
+  stopMotors();
+  Serial.println("🛑 Motors initialized in STOP state");
+  
+  // Connect to WiFi network
+  connectToWiFi();
+  
+  // Discover the WebSocket server via UDP broadcast
+  if (discoverWebSocketServer()) {
+    serverDiscovered = true;
+    Serial.println("✅ Server discovered successfully!");
+    Serial.printf("🔗 Server: %s:%d\n\n", serverIP.c_str(), serverPort);
+    
+    // Initialize WebSocket connection
+    initializeWebSocket();
+    
+  } else {
+    Serial.println("\n❌ FATAL: Could not discover server!");
+    Serial.println("🔧 Check that:");
+    Serial.println("   1. Python server is running");
+    Serial.println("   2. ESP32 and server are on same network");
+    Serial.println("   3. Firewall allows UDP port 8888");
+    Serial.println("\n🔄 Restarting ESP32 in 10 seconds...");
+    delay(10000);
+    ESP.restart();
+  }
+}
+
+// ============================================
+// MAIN LOOP - RUNS CONTINUOUSLY
+// ============================================
+void loop() {
+  // Process WebSocket events
+  webSocket.loop();
+  
+  // Send periodic heartbeat to keep connection alive
+  if (wsConnected && (millis() - lastHeartbeat > HEARTBEAT_INTERVAL)) {
+    webSocket.sendTXT("HEARTBEAT");
+    lastHeartbeat = millis();
+    Serial.println("💓 Heartbeat sent");
+  }
+  
+  // Safety timeout: Stop motors if no command received recently
+  if (wsConnected && currentCommand != "S") {
+    if (millis() - lastCommandTime > COMMAND_TIMEOUT) {
+      Serial.println("⚠️  Command timeout! Stopping motors...");
+      stopMotors();
+      currentCommand = "S";
+    }
+  }
+  
+  // Small delay to prevent watchdog timer issues
+  delay(10);
+}
+
+// ============================================
+// PRINT STARTUP BANNER
+// ============================================
+void printBanner() {
+  Serial.println("\n\n");
+  Serial.println("╔════════════════════════════════════════════════╗");
+  Serial.println("║   ESP32 WROOM32 Robot Control System          ║");
+  Serial.println("║   L298N Motor Driver + WebSocket Client       ║");
+  Serial.println("╚════════════════════════════════════════════════╝");
+  Serial.println();
+  Serial.println("📋 System Information:");
+  Serial.printf("   Chip Model: %s\n", ESP.getChipModel());
+  Serial.printf("   CPU Frequency: %d MHz\n", ESP.getCpuFreqMHz());
+  Serial.printf("   Flash Size: %d MB\n", ESP.getFlashChipSize() / (1024 * 1024));
+  Serial.printf("   Free Heap: %d bytes\n", ESP.getFreeHeap());
+  Serial.println();
+}
+
+// ============================================
+// MOTOR CONTROL - SETUP PINS
+// ============================================
+void setupMotorPins() {
+  Serial.println("⚙️  Initializing motor control pins...");
+  
+  // Configure all motor control pins as outputs
+  pinMode(MOTOR_A_IN1, OUTPUT);
+  pinMode(MOTOR_A_IN2, OUTPUT);
+  pinMode(MOTOR_B_IN3, OUTPUT);
+  pinMode(MOTOR_B_IN4, OUTPUT);
+  
+  // Set all pins LOW initially
+  analogWrite(MOTOR_A_IN1, LOW);
+  analogWrite(MOTOR_A_IN2, LOW);
+  analogWrite(MOTOR_B_IN3, LOW);
+  analogWrite(MOTOR_B_IN4, LOW);
+  
+  // Set PWM to 0 initially
+  
+  Serial.println("✅ Motor pins configured");
+  
+}
+
+// ============================================
+// WIFI CONNECTION
+// ============================================
+void connectToWiFi() {
+  Serial.println("📡 WiFi Connection");
+  Serial.println("─────────────────────────────────────");
+  Serial.printf("SSID: %s\n", WIFI_SSID);
+  Serial.print("Connecting");
+  
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  int attemptCount = 0;
+  while (WiFi.status() != WL_CONNECTED && attemptCount < 60) {
+    delay(500);
+    Serial.print(".");
+    attemptCount++;
+    
+    // Restart if WiFi fails to connect after 30 seconds
+    if (attemptCount == 60) {
+      Serial.println("\n❌ WiFi connection timeout!");
+      Serial.println("🔧 Please check:");
+      Serial.println("   1. SSID and Password are correct");
+      Serial.println("   2. WiFi router is powered on");
+      Serial.println("   3. ESP32 is in range");
+      Serial.println("\n🔄 Restarting ESP32 in 5 seconds...");
+      delay(5000);
+      ESP.restart();
+    }
+  }
+  
+  Serial.println("\n✅ WiFi Connected!");
+  Serial.printf("📍 IP Address: %s\n", WiFi.localIP().toString().c_str());
+  Serial.printf("📶 Signal Strength: %d dBm\n", WiFi.RSSI());
+  Serial.printf("🌐 Gateway: %s\n", WiFi.gatewayIP().toString().c_str());
+  Serial.printf("🔧 Subnet Mask: %s\n\n", WiFi.subnetMask().toString().c_str());
+}
+
+// ============================================
+// SERVER DISCOVERY VIA UDP BROADCAST
+// ============================================
+bool discoverWebSocketServer() {
+  Serial.println("🔍 Server Discovery Process");
+  Serial.println("─────────────────────────────────────");
+  Serial.printf("Broadcasting on UDP port %d\n", UDP_DISCOVERY_PORT);
+  
+  udp.begin(UDP_DISCOVERY_PORT);
+  
+  // Calculate broadcast address
+  IPAddress broadcastIP = WiFi.localIP();
+  broadcastIP[3] = 255;  // Set last octet to 255 for broadcast
+  
+  Serial.printf("📡 Broadcast Address: %s\n\n", broadcastIP.toString().c_str());
+  
+  for (int attempt = 1; attempt <= MAX_DISCOVERY_ATTEMPTS; attempt++) {
+    Serial.printf("🔄 Attempt %d/%d - Sending discovery packet...\n", 
+                  attempt, MAX_DISCOVERY_ATTEMPTS);
+    
+    // Send UDP broadcast discovery packet
+    udp.beginPacket(broadcastIP, UDP_DISCOVERY_PORT);
+    udp.write((const uint8_t*)"DISCOVER_SERVER", 15);
+    udp.endPacket();
+    
+    // Wait for server response
+    unsigned long startTime = millis();
+    while (millis() - startTime < DISCOVERY_TIMEOUT_MS) {
+      int packetSize = udp.parsePacket();
+      
+      if (packetSize > 0) {
+        char packetBuffer[512];
+        int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
+        packetBuffer[len] = '\0';
+        
+        Serial.printf("📥 Received response (%d bytes)\n", len);
+        Serial.printf("   Data: %s\n", packetBuffer);
+        
+        // Parse JSON response
+        StaticJsonDocument<256> doc;
+        DeserializationError error = deserializeJson(doc, packetBuffer);
+        
+        if (error) {
+          Serial.printf("⚠️  JSON parse error: %s\n", error.c_str());
+          continue;
+        }
+        
+        // Check if this is a valid server response
+        if (doc["type"] == "SERVER_INFO") {
+          serverIP = doc["ip"].as<String>();
+          serverPort = doc["ws_port"] | 8765;  // Default to 8765 if not specified
+          
+          Serial.println("\n✅ Valid server response!");
+          Serial.printf("   Server IP: %s\n", serverIP.c_str());
+          Serial.printf("   WebSocket Port: %d\n", serverPort);
+          
+          udp.stop();
+          return true;
+        }
+      }
+      
+      delay(100);
+    }
+    
+    Serial.println("   ⏱️  Timeout - No response\n");
+    delay(1000);  // Wait 1 second before next attempt
+  }
+  
+  Serial.println("❌ Discovery failed after all attempts");
+  udp.stop();
+  return false;
+}
+
+// ============================================
+// WEBSOCKET INITIALIZATION
+// ============================================
+void initializeWebSocket() {
+  Serial.println("🔌 WebSocket Connection");
+  Serial.println("─────────────────────────────────────");
+  Serial.printf("Connecting to: ws://%s:%d/\n", serverIP.c_str(), serverPort);
+  
+  webSocket.begin(serverIP, serverPort, "/");
+  webSocket.onEvent(webSocketEventHandler);
+  webSocket.setReconnectInterval(WEBSOCKET_RECONNECT_INTERVAL);
+  
+  // Disable heartbeat (we'll send our own)
+  webSocket.enableHeartbeat(15000, 3000, 2);
+  
+  Serial.println("⏳ Waiting for connection...\n");
+}
+
+// ============================================
+// WEBSOCKET EVENT HANDLER
+// ============================================
+void webSocketEventHandler(WStype_t type, uint8_t* payload, size_t length) {
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.println("\n🔌 WebSocket Disconnected");
+      Serial.printf("   Time: %lu ms\n", millis());
+      wsConnected = false;
+      stopMotors();
+      currentCommand = "S";
+      Serial.println("   🛑 Motors stopped for safety\n");
+      break;
+      
+    case WStype_CONNECTED:
+      {
+        Serial.println("\n✅ WebSocket Connected!");
+        Serial.printf("   Server: %s\n", payload);
+        Serial.printf("   Time: %lu ms\n", millis());
+        wsConnected = true;
+        lastHeartbeat = millis();
+        
+        // Send ready message to server
+        webSocket.sendTXT("ESP32_READY");
+        Serial.println("   📤 Sent: ESP32_READY\n");
+        Serial.println("🎮 Ready to receive commands!");
+        Serial.println("─────────────────────────────────────\n");
+      }
+      break;
+      
+    case WStype_TEXT:
+      {
+        String command = String((char*)payload);
+        command.trim();
+        command.toUpperCase();
+        
+        Serial.printf("📥 [%lu] Command received: '%s'\n", millis(), command.c_str());
+        
+        // Process the command
+        processMotorCommand(command);
+        lastCommandTime = millis();
+      }
+      break;
+      
+    case WStype_BIN:
+      Serial.printf("📦 Binary data received: %u bytes\n", length);
+      break;
+      
+    case WStype_ERROR:
+      Serial.println("❌ WebSocket Error!");
+      stopMotors();
+      currentCommand = "S";
+      break;
+      
+    case WStype_FRAGMENT_TEXT_START:
+    case WStype_FRAGMENT_BIN_START:
+    case WStype_FRAGMENT:
+    case WStype_FRAGMENT_FIN:
+      // Handle fragmented messages (not typically used)
+      break;
+      
+    case WStype_PING:
+      Serial.println("🏓 Ping received");
+      break;
+      
+    case WStype_PONG:
+      Serial.println("🏓 Pong received");
+      break;
+  }
+}
+
+// ============================================
+// PROCESS MOTOR COMMANDS
+// ============================================
+void processMotorCommand(String cmd) {
+  if (cmd == "W") {
+    moveForward();
+    currentCommand = "W";
+  } 
+  else if (cmd == "S") {
+    stopMotors();
+    currentCommand = "S";
+  } 
+  else if (cmd == "A") {
+    turnLeft();
+    currentCommand = "A";
+  } 
+  else if (cmd == "D") {
+    turnRight();
+    currentCommand = "D";
+  } 
+  else if (cmd == "X") {
+    moveBackward();
+    currentCommand = "X";
+  }
+  else if (cmd == "HEARTBEAT") {
+    // Ignore heartbeat messages from server
+    return;
+  }
+  else {
+    Serial.printf("⚠️  Unknown command: '%s'\n", cmd.c_str());
+  }
+}
+
+// ============================================
+// MOTOR CONTROL FUNCTIONS
+// ============================================
+
+void moveForward() {
+  Serial.println("⬆️  FORWARD - Both motors running forward");
+  
+  
+  analogWrite(MOTOR_A_IN1, speed);
+  analogWrite(MOTOR_A_IN2, LOW);
+  analogWrite(MOTOR_B_IN3, LOW);
+  analogWrite(MOTOR_B_IN4, speed);
+}
+
+void moveBackward() {
+  Serial.println("⬇️  BACKWARD - Both motors running backward");
+  
+  analogWrite(MOTOR_A_IN1, LOW);
+  analogWrite(MOTOR_A_IN2, speed);
+  analogWrite(MOTOR_B_IN3, speed);
+  analogWrite(MOTOR_B_IN4, LOW);
+  
+}
+
+void turnLeft() {
+  Serial.println("⬅️  LEFT TURN - Left reverse, Right forward");
+
+  analogWrite(MOTOR_A_IN1, LOW);
+  analogWrite(MOTOR_A_IN2, speed);
+  analogWrite(MOTOR_B_IN3, LOW);
+  analogWrite(MOTOR_B_IN4, speed);
+  
+}
+
+void turnRight() {
+  Serial.println("➡️  RIGHT TURN - Left forward, Right reverse");
+  
+  analogWrite(MOTOR_A_IN1, speed);
+  analogWrite(MOTOR_A_IN2, LOW);
+  analogWrite(MOTOR_B_IN3, speed);
+  analogWrite(MOTOR_B_IN4, LOW);
+  
+}
+
+void stopMotors() {
+  Serial.println("🛑 STOP - All motors stopped");
+  
+  // Stop Left Motor (Motor A)
+  analogWrite(MOTOR_A_IN1, LOW);
+  analogWrite(MOTOR_A_IN2, LOW);
+  
+  // Stop Right Motor (Motor B)
+  analogWrite(MOTOR_B_IN3, LOW);
+  analogWrite(MOTOR_B_IN4, LOW);
+  
+  Serial.println("   All motor outputs: LOW");
+}
